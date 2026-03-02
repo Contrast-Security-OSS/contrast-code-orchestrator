@@ -1,1 +1,392 @@
+name: Contrast Security Smart Orchestrator
 
+on:
+  workflow_call:
+    inputs:
+      # --- Contrast Platform (required) ---
+      contrast_host:
+        required: true
+        type: string
+        description: NorthStar Platform base URL
+      contrast_org_id:
+        required: true
+        type: string
+        description: Contrast organization UUID
+      contrast_app_installation_id:
+        required: true
+        type: string
+        description: GitHub App installation ID
+
+      # --- Repo Context (required) ---
+      base_branch:
+        required: true
+        type: string
+        description: Default branch of the repository
+      repo_url:
+        required: true
+        type: string
+        description: GitHub repository URL
+      repo_name:
+        required: true
+        type: string
+        description: Repository full name (owner/repo)
+
+      # --- EA Product Disable Flags ---
+      disable_smartscan:
+        type: string
+        default: 'false'
+        description: Set to true to skip SmartScan for this repo
+      disable_smartsca:
+        type: string
+        default: 'true'
+        description: Set to false to enable SmartSCA once image is ready
+      disable_smartfix:
+        type: string
+        default: 'false'
+        description: Set to true to skip SmartFix for this repo
+
+      # --- SmartFix Config ---
+      build_command:
+        description: 'Build command to run before SmartFix'
+        type: string
+        default: 'echo No build command specified.'
+      formatting_command:
+        description: 'Format command to run before SmartFix'
+        type: string
+        default: ''
+      max_open_prs:
+        description: 'Maximum number of open PRs SmartFix will open'
+        type: string
+        default: '5'
+      enable_full_telemetry:
+        description: 'Enable SmartFix full telemetry for debugging'
+        type: string
+        default: 'true'
+      debug_mode:
+        description: 'Enable SmartFix debug mode for verbose logging'
+        type: string
+        default: 'false'
+
+      # --- LLM Config ---
+      use_contrast_llm:
+        description: "Indicates to use Contrast internal LLM"
+        type: string
+        default: 'true'
+      agent_model:
+        description: 'The provider LLM model to use'
+        type: string
+        default: ''
+      azure_api_base:
+        description: 'The Azure API base URL'
+        type: string
+        default: ''
+      azure_api_version:
+        description: 'The Azure API version'
+        type: string
+        default: ''
+      use_aws:
+        description: 'Whether to use AWS credentials configuration'
+        type: string
+        default: 'false'
+      aws_region:
+        description: 'The AWS region for Bedrock LLM'
+        type: string
+        default: ''
+
+      # --- Runner ---
+      github_runner:
+        description: 'The GitHub runner to use (example: ubuntu-latest)'
+        type: string
+        default: 'ubuntu-latest'
+
+    secrets:
+      CONTRAST_API_KEY:
+        description: The contrast API key
+        required: true
+      CONTRAST_AUTHORIZATION:
+        description: The contrast authorization key
+        required: true
+      GH_TOKEN:
+        description: The GitHub token
+        required: true
+      ANTHROPIC_API_KEY:
+        description: The Anthropic API key
+        required: false
+      GEMINI_API_KEY:
+        description: The Google Gemini API key
+        required: false
+      AZURE_API_KEY:
+        description: The Azure API key
+        required: false
+      AWS_BEARER_TOKEN_BEDROCK:
+        description: The AWS Bedrock API key
+        required: false
+      AWS_ACCESS_KEY_ID:
+        description: The AWS access key id
+        required: false
+      AWS_SECRET_ACCESS_KEY:
+        description: The AWS secret access key
+        required: false
+      AWS_SESSION_TOKEN:
+        description: The AWS session token
+        required: false
+      AWS_ROLE_TO_ASSUME:
+        description: The AWS role to assume
+        required: false
+      # These are temporary secrets to get things working!!!
+      CONTRAST_ARTIFACTORY_USER:
+        description: Artifactory username for Contrast Docker image registry
+        required: true
+      CONTRAST_ARTIFACTORY_PASSWORD:
+        description: Artifactory password for Contrast Docker image registry
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+
+  # ─────────────────────────────────────────────────────────────────────
+  # JOB 1: Detect Contrast Application ID
+  # Runs contrast/module-identifier:v1 to resolve the Contrast app ID
+  # for this repository. The container writes CONTRAST_APP_ID to
+  # $GITHUB_ENV. Downstream jobs consume it via job outputs.
+  # Dependency: AIML-494 (Alex Corll)
+  # ─────────────────────────────────────────────────────────────────────
+  detect-app-id:
+    name: Detect Contrast Application ID
+    runs-on: ${{ inputs.github_runner }}
+    outputs:
+      contrast_app_id: ${{ steps.set-output.outputs.contrast_app_id }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # Uncomment if this job needs AWS Bedrock credentials
+      # - name: Configure AWS Credentials
+      #   if: ${{ inputs.use_aws == 'true' && inputs.aws_region != '' }}
+      #   uses: aws-actions/configure-aws-credentials@v5
+      #   with:
+      #     aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+      #     aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      #     aws-session-token:     ${{ secrets.AWS_SESSION_TOKEN }}
+      #     role-to-assume:        ${{ secrets.AWS_ROLE_TO_ASSUME }}
+      #     aws-region:            ${{ inputs.aws_region }}
+
+      - name: Run Contrast Module Identifier
+        uses: maus007/docker-run-action-fork@5ddaad0f7eedd03f64e412b1931852bd3031b273
+        with:
+          registry: contrastsecurity-docker.jfrog.io
+          username: ${{ secrets.CONTRAST_ARTIFACTORY_USER }}
+          password: ${{ secrets.CONTRAST_ARTIFACTORY_PASSWORD }}
+          image: contrastsecurity-docker.jfrog.io/aiml-module-identifier:latest
+          options: |
+            -v "${{ github.workspace }}:/repo" \
+            -v "$(dirname $GITHUB_ENV):$(dirname $GITHUB_ENV)" \
+            -e GITHUB_ENV="$GITHUB_ENV" \
+            -e CONTRAST_HOST_NAME="${{ inputs.contrast_host }}" \
+            -e CONTRAST_ORG_ID="${{ inputs.contrast_org_id }}" \
+            -e CONTRAST_API_KEY="${{ secrets.CONTRAST_API_KEY }}" \
+            -e CONTRAST_AUTH_TOKEN="${{ secrets.CONTRAST_AUTHORIZATION_KEY }}" \
+            application-identifier \
+            /repo --single --debug
+
+      - name: Validate Application ID and Set Output
+        id: set-output
+        shell: bash
+        run: |
+          if [[ -z "$CONTRAST_APP_ID" || "$CONTRAST_APP_ID" == "null" ]]; then
+            echo "::error::Contrast application ID could not be automatically detected for repository '${{ inputs.repo_name }}'."
+            echo ""
+            echo "Set CONTRAST_APP_ID manually:"
+            echo "  1. Browse your applications: ${{ inputs.contrast_host }}/Contrast/static/ng/index.html#/${{ inputs.contrast_org_id }}/applications"
+            echo "  2. Select your application"
+            echo "  3. The ID is the UUID after applications/ in the URL"
+            echo "     e.g. applications/057254e6-f065-40fa-8197-e1d7ace10e67"
+            exit 1
+          fi
+
+          echo "Successfully detected application ID: $CONTRAST_APP_ID"
+          echo "contrast_app_id=$CONTRAST_APP_ID" >> $GITHUB_OUTPUT
+
+  # ─────────────────────────────────────────────────────────────────────
+  # JOB 2: Run SmartScan
+  # SAST scanner — runs on every trigger event.
+  # Skipped if disable_smartscan is 'true'.
+  # Uses contrast/smartscan:v1 public DockerHub image — no credentials required.
+  # ─────────────────────────────────────────────────────────────────────
+  run-smartscan:
+    name: Run SmartScan
+    needs: detect-app-id
+    if: ${{ inputs.disable_smartscan != 'true' }}
+    runs-on: ${{ inputs.github_runner }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # Uncomment if this job needs AWS Bedrock credentials
+      # - name: Configure AWS Credentials
+      #   if: ${{ inputs.use_aws == 'true' && inputs.aws_region != '' }}
+      #   uses: aws-actions/configure-aws-credentials@v5
+      #   with:
+      #     aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+      #     aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      #     aws-session-token:     ${{ secrets.AWS_SESSION_TOKEN }}
+      #     role-to-assume:        ${{ secrets.AWS_ROLE_TO_ASSUME }}
+      #     aws-region:            ${{ inputs.aws_region }}
+
+      - name: Get Repository Languages
+        id: get_repo_langs
+        uses: octokit/request-action@v2.4.0
+        with:
+          route: GET /repos/${{ inputs.repo_name }}/languages
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+
+      - name: Set Repo Language Info
+        run: |
+          echo '${{ steps.get_repo_langs.outputs.data }}' \
+            | jq -r 'to_entries[] | [.[]] | join(",")' \
+            | tr '\n' '|' \
+            | xargs -I '{}' echo "REPO_LANG_INFO={}" >> $GITHUB_ENV
+
+      - name: Set Branch Name
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "BRANCH_NAME=${{ github.head_ref }}" >> $GITHUB_ENV
+          else
+            echo "BRANCH_NAME=${{ github.ref_name }}" >> $GITHUB_ENV
+          fi
+
+      - name: Run SmartScan
+        uses: maus007/docker-run-action-fork@5ddaad0f7eedd03f64e412b1931852bd3031b273
+        with:
+          registry: contrastsecurity-docker-harmony-releases.jfrog.io
+          username: ${{ secrets.CONTRAST_ARTIFACTORY_USER }}
+          password: ${{ secrets.CONTRAST_ARTIFACTORY_PASSWORD }}
+          image: contrastsecurity-docker-harmony-releases.jfrog.io/sast-smartai:latest
+          options: |
+            -v "${{ github.workspace }}:/var/app" \
+            -e LOGLEVEL=INFO \
+            -e REPO_NAME=${{ github.event.repository.name }} \
+            -e REPO_LANG_INFO=${{ env.REPO_LANG_INFO }} \
+            -e REPO_HTTP_URL=${{ inputs.repo_url }}/${{ inputs.repo_name }} \
+            -e BRANCH_NAME=${{ env.BRANCH_NAME }} \
+            -e DEFAULT_BRANCH=${{ github.event.repository.default_branch }} \
+            -e APPLICATION_NAME=${{ github.event.repository.name }} \
+            -e COMMIT_HASH=${{ github.sha }} \
+            -e COMMITTER=${{ github.triggering_actor }} \
+            -e TAG=${{ github.ref }} \
+            -e RUN_ID=${{ github.run_id }} \
+            -e WORKFLOW_ID=${{ github.workflow_sha }} \
+            -e CONTRAST_BASE_URL=${{ inputs.contrast_host }} \
+            -e CONTRAST_API_KEY=${{ secrets.CONTRAST_API_KEY }} \
+            -e CONTRAST_AUTHORIZATION=${{ secrets.CONTRAST_AUTHORIZATION_KEY }} \
+            -e CONTRAST_ORG_ID=${{ inputs.contrast_org_id }} \
+            -e APPLICATION_DIR=/var/app
+          # entrypoint script not invoked by docker-run-action
+          run: /usr/app/smartai.py
+
+  # ─────────────────────────────────────────────────────────────────────
+  # JOB 3: Run SmartSCA
+  # SCA dependency scanning. Disabled by default for EA.
+  # Will be enabled once contrast/smart-sca:v1 is delivered by the SCA team.
+  # ─────────────────────────────────────────────────────────────────────
+  run-sca:
+    name: Run SmartSCA
+    needs: detect-app-id
+    if: ${{ inputs.disable_smartsca != 'true' }}
+    runs-on: ${{ inputs.github_runner }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # Uncomment if this job needs AWS Bedrock credentials
+      # - name: Configure AWS Credentials
+      #   if: ${{ inputs.use_aws == 'true' && inputs.aws_region != '' }}
+      #   uses: aws-actions/configure-aws-credentials@v5
+      #   with:
+      #     aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+      #     aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      #     aws-session-token:     ${{ secrets.AWS_SESSION_TOKEN }}
+      #     role-to-assume:        ${{ secrets.AWS_ROLE_TO_ASSUME }}
+      #     aws-region:            ${{ inputs.aws_region }}
+
+      - name: Run SmartSCA
+        uses: docker://dougjeremias489/contrast-sca-cli
+        env:
+          CONTRAST_HOST:                     ${{ inputs.contrast_host }}
+          CONTRAST_ORG_ID:                   ${{ inputs.contrast_org_id }}
+          CONTRAST_APP_INSTALLATION_ID:      ${{ inputs.contrast_app_installation_id }}
+          CONTRAST_API_KEY:                  ${{ secrets.CONTRAST_API_KEY }}
+          CONTRAST_AUTHORIZATION:            ${{ secrets.CONTRAST_AUTHORIZATION }}
+          GITHUB_SERVER_URL:                 ${{ inputs.repo_url }}
+          GITHUB_REPOSITORY:                 ${{ inputs.repo_name }}
+
+  # ─────────────────────────────────────────────────────────────────────
+  # JOB 4: Run SmartFix
+  # AI-powered fix PR generation. Event-gated — only runs on:
+  #   • pull_request (closed) — handles merge notification or PR close
+  #   • workflow_dispatch     — manual trigger to generate fixes
+  #   • schedule              — scheduled fix generation
+  # Does NOT run on PR open/synchronize to avoid redundant runs.
+  # ─────────────────────────────────────────────────────────────────────
+  run-smartfix:
+    name: Run SmartFix
+    needs: detect-app-id
+    if: |
+      inputs.disable_smartfix != 'true' &&
+      (
+        github.event_name == 'workflow_dispatch' ||
+        github.event_name == 'schedule' ||
+        (github.event_name == 'pull_request' && github.event.action == 'closed')
+      )
+    runs-on: ${{ inputs.github_runner }}
+    steps:
+      - name: Determine SmartFix Job Type
+        id: job_type
+        run: |
+          if [[ "${{ github.event.pull_request.merged }}" == "true" ]]; then
+            echo "label=Notify Contrast on PR Merge" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.event.pull_request.merged }}" == "false" ]]; then
+            echo "label=Handle PR Close" >> $GITHUB_OUTPUT
+          else
+            echo "label=Run Contrast AI SmartFix - Generate Fixes" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Configure AWS Credentials
+        if: ${{ inputs.use_aws == 'true' && inputs.aws_region != '' }}
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token:     ${{ secrets.AWS_SESSION_TOKEN }}
+          role-to-assume:        ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region:            ${{ inputs.aws_region }}
+
+      - name: ${{ steps.job_type.outputs.label }}
+        uses: Contrast-Security-OSS/contrast-ai-smartfix-action@v1
+        with:
+          contrast_host:              ${{ inputs.contrast_host }}
+          contrast_org_id:            ${{ inputs.contrast_org_id }}
+          contrast_app_id:            ${{ emv.CONTRAST_APP_ID }}
+          base_branch:                ${{ inputs.base_branch }}
+          build_command:              ${{ inputs.build_command }}
+          formatting_command:         ${{ inputs.formatting_command }}
+          use_contrast_llm:           ${{ inputs.use_contrast_llm }}
+          max_open_prs:               ${{ inputs.max_open_prs }}
+          agent_model:                ${{ inputs.agent_model }}
+          azure_api_base:             ${{ inputs.azure_api_base }}
+          azure_api_version:          ${{ inputs.azure_api_version }}
+          enable_full_telemetry:      ${{ inputs.enable_full_telemetry }}
+          debug_mode:                 ${{ inputs.debug_mode }}
+          aws_region:                 ${{ inputs.aws_region }}
+          contrast_api_key:           ${{ secrets.CONTRAST_API_KEY }}
+          contrast_authorization_key: ${{ secrets.CONTRAST_AUTHORIZATION }}
+          github_token:               ${{ secrets.GH_TOKEN }}
+          gemini_api_key:             ${{ secrets.GEMINI_API_KEY }}
+          anthropic_api_key:          ${{ secrets.ANTHROPIC_API_KEY }}
+          azure_api_key:              ${{ secrets.AZURE_API_KEY }}
+          aws_bearer_token_bedrock:   ${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}

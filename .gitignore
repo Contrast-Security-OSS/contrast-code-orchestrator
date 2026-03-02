@@ -1,0 +1,23 @@
+HELP.md
+
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
+
+### VS Code ###
+.vscode/
+
+# ignore claude dir (except skills for team sharing)
+.claude/*
+!.claude/skills/
+.claude/*.json
+
+# ignore the docs dir that is used for agentic workflows to plan
+docs/
+
+# git worktrees for isolated feature development
+.worktrees/
+
+.beads
