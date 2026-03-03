@@ -189,9 +189,8 @@ jobs:
             -e CONTRAST_HOST_NAME="${{ inputs.contrast_host }}" \
             -e CONTRAST_ORG_ID="${{ inputs.contrast_org_id }}" \
             -e CONTRAST_API_KEY="${{ secrets.CONTRAST_API_KEY }}" \
-            -e CONTRAST_AUTH_TOKEN="${{ secrets.CONTRAST_AUTHORIZATION_KEY }}" \
-            application-identifier \
-            /repo --single --debug
+            -e CONTRAST_AUTH_TOKEN="${{ secrets.CONTRAST_AUTHORIZATION_KEY }}"
+          run: python -m module_identifier /repo --single --debug
 
       - name: Validate Application ID and Set Output
         id: set-app-id-output
