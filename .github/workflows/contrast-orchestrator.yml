@@ -17,6 +17,12 @@ on:
         type: string
         description: GitHub App installation ID
 
+      # --- Contrast Platform (optional override) ---
+      contrast_application_id:
+        required: false
+        type: string
+        description: Manual override for the Contrast application UUID (skips auto-detection)
+
       # --- Repo Context (required) ---
       base_branch:
         required: true
@@ -203,7 +209,13 @@ jobs:
         id: set-app-id-output
         shell: bash
         run: |
-          if [[ -z "$CONTRAST_APP_ID" || "$CONTRAST_APP_ID" == "null" ]]; then
+          if [[ -n "$CONTRAST_APP_ID" && "$CONTRAST_APP_ID" != "null" ]]; then
+            echo "Successfully detected contrast application ID: $CONTRAST_APP_ID"
+          elif [[ -n "${{ inputs.contrast_application_id }}" ]]; then
+            echo "Auto-detection did not find an contrast application ID. Using contrast_application_id input override."
+            CONTRAST_APP_ID="${{ inputs.contrast_application_id }}"
+            echo "CONTRAST_APP_ID=$CONTRAST_APP_ID" >> $GITHUB_ENV
+          else
             echo "Contrast application ID could not be automatically detected for repository '${{ inputs.repo_name }}'."
             echo ""
             echo "Set CONTRAST_APP_ID manually:"
@@ -211,8 +223,9 @@ jobs:
             echo "  2. Select your application"
             echo "  3. The ID is the UUID after applications/ in the URL"
             echo "     e.g. applications/057254e6-f065-40fa-8197-e1d7ace10e67"
-          else
-            echo "Successfully detected application ID: $CONTRAST_APP_ID"
+          fi
+
+          if [[ -n "$CONTRAST_APP_ID" && "$CONTRAST_APP_ID" != "null" ]]; then
             echo "contrast_app_id=$CONTRAST_APP_ID" >> $GITHUB_OUTPUT
           fi
 
@@ -385,7 +398,7 @@ jobs:
         with:
           contrast_host:              ${{ inputs.contrast_host }}
           contrast_org_id:            ${{ inputs.contrast_org_id }}
-          contrast_app_id:            ${{ needs.detect-app-id.outputs.contrast_app_id }}
+          contrast_app_id:            ${{ needs.detect-app-id.outputs.contrast_app_id || contrast_application_id }}
           base_branch:                ${{ inputs.base_branch }}
           build_command:              ${{ inputs.build_command }}
           formatting_command:         ${{ inputs.formatting_command }}
