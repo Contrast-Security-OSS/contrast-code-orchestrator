@@ -22,6 +22,14 @@ on:
         required: false
         type: string
         description: Manual override for the Contrast application UUID (skips auto-detection)
+      run_triage:
+        required: false
+        type: boolean
+        description: Whether to run contrast-triage feature in SmartScan
+      triage_duration:
+        required: false
+        type: string
+        description: Duration to run the contrast-triage tool (e.g. '1m', '5m').
 
       # --- Repo Context (required) ---
       base_branch:
@@ -313,6 +321,8 @@ jobs:
             -e CONTRAST_API_KEY=${{ secrets.CONTRAST_API_KEY }} \
             -e CONTRAST_AUTHORIZATION=${{ secrets.CONTRAST_AUTHORIZATION_KEY }} \
             -e CONTRAST_ORG_ID=${{ inputs.contrast_org_id }} \
+            -e RUN_TRIAGE=${{ inputs.run_triage || True }}
+            -e TRIAGE_DURATION=${{ inputs.triage_duration || '' }}
             -e APPLICATION_DIR=/var/app
           # entrypoint script not invoked by docker-run-action
           run: /usr/app/smartai.py
