@@ -31,6 +31,7 @@ on:
       triage_duration:
         required: false
         type: string
+        default: '1m'
         description: Duration to run the contrast-triage tool (e.g. '1m', '5m').
 
       # --- Repo Context (required) ---
@@ -302,7 +303,7 @@ jobs:
           CONTRAST_API_KEY: ${{ secrets.CONTRAST_API_KEY }}
           CONTRAST_AUTHORIZATION: ${{ secrets.CONTRAST_AUTHORIZATION_KEY }}
           RUN_TRIAGE: ${{ inputs.run_triage }}
-          TRIAGE_DURATION: ${{ inputs.triage_duration || '1m' }}
+          TRIAGE_DURATION: ${{ inputs.triage_duration }}
           APPLICATION_DIR: ${{ github.workspace }}
 
   # ─────────────────────────────────────────────────────────────────────
