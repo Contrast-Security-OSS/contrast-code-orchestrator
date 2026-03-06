@@ -291,7 +291,7 @@ jobs:
           REPO_HTTP_URL: ${{ inputs.repo_url }}/${{ inputs.repo_name }}
           BRANCH_NAME: ${{ env.BRANCH_NAME }}
           DEFAULT_BRANCH: ${{ inputs.base_branch }}
-          APPLICATION_NAME: ${{ needs.detect-app-name.outputs.contrast_app_name }}
+          APPLICATION_NAME: ${{ needs.detect-app-data.outputs.contrast_app_name }}
           COMMIT_HASH: ${{ github.sha }}
           COMMITTER: ${{ github.triggering_actor }}
           TAG: ${{ github.ref }}
@@ -302,7 +302,7 @@ jobs:
           CONTRAST_API_KEY: ${{ secrets.CONTRAST_API_KEY }}
           CONTRAST_AUTHORIZATION: ${{ secrets.CONTRAST_AUTHORIZATION_KEY }}
           RUN_TRIAGE: ${{ inputs.run_triage }}
-          TRIAGE_DURATION: ${{ inputs.triage_duration || '' }}
+          TRIAGE_DURATION: ${{ inputs.triage_duration || '1m' }}
           APPLICATION_DIR: ${{ github.workspace }}
 
   # ─────────────────────────────────────────────────────────────────────
