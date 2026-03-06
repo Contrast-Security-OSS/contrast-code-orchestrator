@@ -373,7 +373,7 @@ jobs:
           aws-region:            ${{ inputs.aws_region }}
 
       - name: ${{ steps.job_type.outputs.label }}
-        uses: Contrast-Security-OSS/contrast-ai-smartfix-action@release_candidate
+        uses: Contrast-Security-OSS/contrast-ai-smartfix-action@v1
         with:
           contrast_host:              ${{ inputs.contrast_host }}
           contrast_org_id:            ${{ inputs.contrast_org_id }}
