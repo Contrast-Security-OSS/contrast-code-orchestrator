@@ -376,7 +376,7 @@ jobs:
         with:
           contrast_host:              ${{ inputs.contrast_host }}
           contrast_org_id:            ${{ inputs.contrast_org_id }}
-          contrast_app_id:            ${{ needs.detect-app-data.outputs.contrast_app_id }}
+          contrast_app_id:            ${{ needs.detect-app-data.outputs.contrast_app_id || inputs.contrast_application_id}}
           base_branch:                ${{ inputs.base_branch }}
           build_command:              ${{ inputs.build_command }}
           formatting_command:         ${{ inputs.formatting_command }}
