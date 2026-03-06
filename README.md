@@ -1,6 +1,6 @@
-# Contrast Smart Orchestrator
+# Contrast Code Orchestrator
 
-Shared GitHub Actions reusable workflow that runs Contrast Security's Smart products
+Shared GitHub Actions reusable workflow that runs Contrast Security code products
 (SmartScan, SmartSCA, SmartFix) on your repository.
 
 ## Usage
@@ -10,12 +10,12 @@ by the Contrast GitHub App. You do not need to reference this workflow directly.
 
 ## Products
 
-| Job | Product | Trigger |
-|---|---|---|
-| `detect-app-id` | Application ID detection | All events |
-| `run-smartscan` | SAST scanning | All events |
-| `run-sca` | SCA dependency scanning | All events |
-| `run-smartfix` | AI fix PR generation | PR close, dispatch, schedule |
+| Job | Product                          | Trigger |
+|---|----------------------------------|---|
+| `detect-app-data` | Application ID/Name detection    | All events |
+| `run-smartscan` | SAST scanning          | All events |
+| `run-sca` | SCA dependency scanning      | All events |
+| `run-smartfix` | AI fix PR generation    | PR close, dispatch, schedule |
 
 ## Disabling Products
 
@@ -27,4 +27,4 @@ disable_smartfix:  'true'
 
 ## Support
 
-Contact your Contrast Security account team or open an issue in this repository.
+Contact your Contrast Security account team: [support@contrastsecurity.com].

@@ -1,4 +1,4 @@
-name: Contrast Security Smart Orchestrator
+name: Contrast Code Orchestrator
 
 on:
   workflow_call:
@@ -7,7 +7,7 @@ on:
       contrast_host:
         required: true
         type: string
-        description: NorthStar Platform base URL
+        description: Contrast Platform base URL
       contrast_org_id:
         required: true
         type: string
@@ -15,12 +15,13 @@ on:
       contrast_app_install_id:
         required: true
         type: string
-        description: GitHub App installation ID
+        description: Contrast GitHub App installation ID
 
       # --- Contrast Platform (optional override) ---
       contrast_application_id:
         required: false
         type: string
+        default: ''
         description: Manual override for the Contrast application UUID (skips auto-detection)
       run_triage:
         required: false
@@ -52,8 +53,8 @@ on:
         description: Set to true to skip SmartScan for this repo
       disable_smartsca:
         type: string
-        default: 'true'
-        description: Set to false to enable SmartSCA once image is ready
+        default: 'false'
+        description: Set to true to skip SmartSCA for this repo
       disable_smartfix:
         type: string
         default: 'false'
@@ -147,13 +148,6 @@ on:
       AWS_ROLE_TO_ASSUME:
         description: The AWS role to assume
         required: false
-      # These are temporary secrets to get things working!!!
-      CONTRAST_ARTIFACTORY_USER:
-        description: Artifactory username for Contrast Docker image registry
-        required: true
-      CONTRAST_ARTIFACTORY_PASSWORD:
-        description: Artifactory password for Contrast Docker image registry
-        required: true
 
 permissions:
   contents: write
@@ -189,29 +183,20 @@ jobs:
           #role-to-assume:        ${{ secrets.AWS_ROLE_TO_ASSUME }}
           #aws-region:            ${{ inputs.aws_region }}
 
-      - name: Login to Artifactory
-        uses: docker/login-action@v3
-        with:
-          registry: contrastsecurity-docker.jfrog.io
-          username: ${{ secrets.CONTRAST_ARTIFACTORY_USER }}
-          password: ${{ secrets.CONTRAST_ARTIFACTORY_PASSWORD }}
-
-      - name: Pull module-identifier image
+      - name: Print workspace path
         run: |
-          docker pull contrastsecurity-docker.jfrog.io/aiml-module-identifier:latest
+          echo "GitHub workspace path: ${{ github.workspace }}"
+          echo "GITHUB_WORKSPACE env var: $GITHUB_WORKSPACE"
 
       - name: Run Contrast Module Identifier
-        run: |
-          docker run --rm \
-            -v "${{ github.workspace }}:/repo" \
-            -v "$(dirname $GITHUB_ENV):$(dirname $GITHUB_ENV)" \
-            -e GITHUB_ENV="$GITHUB_ENV" \
-            -e CONTRAST_HOST_NAME="${{ inputs.contrast_host }}" \
-            -e CONTRAST_ORG_ID="${{ inputs.contrast_org_id }}" \
-            -e CONTRAST_API_KEY="${{ secrets.CONTRAST_API_KEY }}" \
-            -e CONTRAST_AUTH_TOKEN="${{ secrets.CONTRAST_AUTHORIZATION_KEY }}" \
-            application-identifier \
-            /repo --single --debug
+        uses: docker://contrast/module-identifier
+        with:
+          args: "$GITHUB_WORKSPACE" --single --debug
+        env:
+          CONTRAST_HOST_NAME: ${{ inputs.contrast_host }}
+          CONTRAST_ORG_ID: ${{ inputs.contrast_org_id }}
+          CONTRAST_API_KEY: ${{ secrets.CONTRAST_API_KEY }}
+          CONTRAST_AUTH_TOKEN: ${{ secrets.CONTRAST_AUTHORIZATION_KEY }}
 
       - name: Validate Application ID and Set Output
         id: set-app-id-output
@@ -254,8 +239,8 @@ jobs:
   # Skipped if disable_smartscan is 'true'.
   # Uses contrast/smartscan:v1 public DockerHub image — no credentials required.
   # ─────────────────────────────────────────────────────────────────────
-  run-smartscan:
-    name: Run SmartScan
+  run-contrast-code:
+    name: Run Contrast Code
     needs: detect-app-data
     if: ${{ inputs.disable_smartscan != 'true' }}
     runs-on: ${{ inputs.github_runner }}
@@ -263,15 +248,15 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      #- name: Configure AWS Credentials
-        #if: ${{ inputs.use_aws == 'true' && inputs.aws_region != '' }}
-        #uses: aws-actions/configure-aws-credentials@v5
-        #with:
-          #aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-          #aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          #aws-session-token:     ${{ secrets.AWS_SESSION_TOKEN }}
-          #role-to-assume:        ${{ secrets.AWS_ROLE_TO_ASSUME }}
-          #aws-region:            ${{ inputs.aws_region }}
+      - name: Configure AWS Credentials
+        if: ${{ inputs.use_aws == 'true' && inputs.aws_region != '' }}
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token:     ${{ secrets.AWS_SESSION_TOKEN }}
+          role-to-assume:        ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region:            ${{ inputs.aws_region }}
 
       - name: Get Repository Languages
         id: get_repo_langs
@@ -296,36 +281,28 @@ jobs:
             echo "BRANCH_NAME=${{ github.ref_name }}" >> $GITHUB_ENV
           fi
 
-      - name: Run SmartScan
-        uses: maus007/docker-run-action-fork@5ddaad0f7eedd03f64e412b1931852bd3031b273
-        with:
-          registry: contrastsecurity-docker-harmony-releases.jfrog.io
-          username: ${{ secrets.CONTRAST_ARTIFACTORY_USER }}
-          password: ${{ secrets.CONTRAST_ARTIFACTORY_PASSWORD }}
-          image: contrastsecurity-docker-harmony-releases.jfrog.io/sast-smartai:latest
-          options: |
-            -v "${{ github.workspace }}:/var/app" \
-            -e LOGLEVEL=DEBUG \
-            -e REPO_NAME=${{ github.event.repository.name }} \
-            -e REPO_LANG_INFO=${{ env.REPO_LANG_INFO }} \
-            -e REPO_HTTP_URL=${{ inputs.repo_url }}/${{ inputs.repo_name }} \
-            -e BRANCH_NAME=${{ env.BRANCH_NAME }} \
-            -e DEFAULT_BRANCH=${{ github.event.repository.default_branch }} \
-            -e APPLICATION_NAME=${{ needs.detect-app-name.outputs.contrast_app_name }} \
-            -e COMMIT_HASH=${{ github.sha }} \
-            -e COMMITTER=${{ github.triggering_actor }} \
-            -e TAG=${{ github.ref }} \
-            -e RUN_ID=${{ github.run_id }} \
-            -e WORKFLOW_ID=${{ github.workflow_sha }} \
-            -e CONTRAST_BASE_URL=${{ inputs.contrast_host }} \
-            -e CONTRAST_API_KEY=${{ secrets.CONTRAST_API_KEY }} \
-            -e CONTRAST_AUTHORIZATION=${{ secrets.CONTRAST_AUTHORIZATION_KEY }} \
-            -e CONTRAST_ORG_ID=${{ inputs.contrast_org_id }} \
-            -e RUN_TRIAGE=${{ inputs.run_triage || True }}
-            -e TRIAGE_DURATION=${{ inputs.triage_duration || '' }}
-            -e APPLICATION_DIR=/var/app
-          # entrypoint script not invoked by docker-run-action
-          run: /usr/app/smartai.py
+      - name: Run Contrast Code Scanner
+        uses: docker://contrast/sast-smartai
+        env:
+          LOGLEVEL: 'DEBUG'
+          REPO_NAME: ${{ github.event.repository.name }}
+          REPO_LANG_INFO: ${{ env.REPO_LANG_INFO }}
+          REPO_HTTP_URL: ${{ inputs.repo_url }}/${{ inputs.repo_name }}
+          BRANCH_NAME: ${{ env.BRANCH_NAME }}
+          DEFAULT_BRANCH: ${{ inputs.base_branch }}
+          APPLICATION_NAME: ${{ needs.detect-app-name.outputs.contrast_app_name }}
+          COMMIT_HASH: ${{ github.sha }}
+          COMMITTER: ${{ github.triggering_actor }}
+          TAG: ${{ github.ref }}
+          RUN_ID: ${{ github.run_id }}
+          WORKFLOW_ID: ${{ github.workflow_sha }}
+          CONTRAST_BASE_URL: ${{ inputs.contrast_host }}
+          CONTRAST_ORG_ID: ${{ inputs.contrast_org_id }}
+          CONTRAST_API_KEY: ${{ secrets.CONTRAST_API_KEY }}
+          CONTRAST_AUTH_TOKEN: ${{ secrets.CONTRAST_AUTHORIZATION_KEY }}
+          RUN_TRIAGE: ${{ inputs.run_triage || True }}
+          TRIAGE_DURATION: ${{ inputs.triage_duration || '' }}
+          APPLICATION_DIR: "$GITHUB_WORKSPACE"
 
   # ─────────────────────────────────────────────────────────────────────
   # JOB 3: Run SmartSCA
@@ -340,16 +317,6 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-
-      - name: Configure AWS Credentials
-        if: ${{ inputs.use_aws == 'true' && inputs.aws_region != '' }}
-        uses: aws-actions/configure-aws-credentials@v5
-        with:
-          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token:     ${{ secrets.AWS_SESSION_TOKEN }}
-          role-to-assume:        ${{ secrets.AWS_ROLE_TO_ASSUME }}
-          aws-region:            ${{ inputs.aws_region }}
 
       - name: Run SmartSCA
         uses: docker://dougjeremias489/contrast-sca-cli
