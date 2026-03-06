@@ -26,6 +26,7 @@ on:
       run_triage:
         required: false
         type: boolean
+        default: true
         description: Whether to run contrast-triage feature in SmartScan
       triage_duration:
         required: false
@@ -300,7 +301,7 @@ jobs:
           CONTRAST_ORG_ID: ${{ inputs.contrast_org_id }}
           CONTRAST_API_KEY: ${{ secrets.CONTRAST_API_KEY }}
           CONTRAST_AUTH_TOKEN: ${{ secrets.CONTRAST_AUTHORIZATION_KEY }}
-          RUN_TRIAGE: ${{ inputs.run_triage || True }}
+          RUN_TRIAGE: ${{ inputs.run_triage }}
           TRIAGE_DURATION: ${{ inputs.triage_duration || '' }}
           APPLICATION_DIR: "$GITHUB_WORKSPACE"
 
@@ -375,7 +376,7 @@ jobs:
         with:
           contrast_host:              ${{ inputs.contrast_host }}
           contrast_org_id:            ${{ inputs.contrast_org_id }}
-          contrast_app_id:            ${{ needs.detect-app-id.outputs.contrast_app_id || contrast_application_id }}
+          contrast_app_id:            ${{ needs.detect-app-data.outputs.contrast_app_id }}
           base_branch:                ${{ inputs.base_branch }}
           build_command:              ${{ inputs.build_command }}
           formatting_command:         ${{ inputs.formatting_command }}
