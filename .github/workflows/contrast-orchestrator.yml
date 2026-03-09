@@ -244,7 +244,13 @@ jobs:
   run-contrast-code:
     name: Run Contrast Code
     needs: detect-app-data
-    if: ${{ inputs.disable_smartscan != 'true' }}
+    if: |
+      inputs.disable_smartscan != 'true' &&
+      (
+        github.event_name == 'workflow_dispatch' ||
+        (github.event_name == 'pull_request' && (github.event.action == 'opened' || github.event.action == 'synchronize')) ||
+        (github.event_name == 'push' && github.ref == format('refs/heads/{0}', inputs.base_branch))
+      )
     runs-on: ${{ inputs.github_runner }}
     steps:
       - name: Checkout Repository
