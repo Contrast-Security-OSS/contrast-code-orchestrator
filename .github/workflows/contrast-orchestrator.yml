@@ -159,7 +159,44 @@ permissions:
 jobs:
 
   # ─────────────────────────────────────────────────────────────────────
-  # JOB 1: Detect Contrast Application Data
+  # JOB 1: Detect Repository Languages
+  # Calls the GitHub Languages API to detect repository languages.
+  # Outputs both comma-separated names (for module-identifier --languages)
+  # and pipe-delimited format (for SmartScan REPO_LANG_INFO).
+  # ─────────────────────────────────────────────────────────────────────
+  detect-languages:
+    name: Detect Repository Languages
+    runs-on: ${{ inputs.github_runner }}
+    outputs:
+      languages: ${{ steps.parse-langs.outputs.languages }}
+      repo_lang_info: ${{ steps.parse-langs.outputs.repo_lang_info }}
+    steps:
+      - name: Get Repository Languages
+        id: get-repo-langs
+        uses: octokit/request-action@v2.4.0
+        with:
+          route: GET /repos/${{ inputs.repo_name }}/languages
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+
+      - name: Parse Language Data
+        id: parse-langs
+        shell: bash
+        run: |
+          LANG_JSON='${{ steps.get-repo-langs.outputs.data }}'
+
+          # Comma-separated language names for --languages
+          LANGUAGES=$(echo "$LANG_JSON" | jq -r 'keys | join(",")')
+          echo "languages=$LANGUAGES" >> $GITHUB_OUTPUT
+          echo "Detected languages: $LANGUAGES"
+
+          # Pipe-delimited format for SmartScan (Lang,Bytes|Lang,Bytes|)
+          REPO_LANG_INFO=$(echo "$LANG_JSON" | jq -r 'to_entries[] | "\(.key),\(.value)"' | tr '\n' '|')
+          echo "repo_lang_info=$REPO_LANG_INFO" >> $GITHUB_OUTPUT
+          echo "Repo lang info: $REPO_LANG_INFO"
+
+  # ─────────────────────────────────────────────────────────────────────
+  # JOB 2: Detect Contrast Application Data
   # Runs contrast/module-identifier:v1 to resolve the Contrast app ID/Name
   # for this repository. The container writes CONTRAST_APP_ID / CONTRAST_APP_Name
   # to $GITHUB_ENV. The validate step forwards it to $GITHUB_OUTPUT so
@@ -167,6 +204,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   detect-app-data:
     name: Detect Contrast Application Data
+    needs: detect-languages
     runs-on: ${{ inputs.github_runner }}
     outputs:
       contrast_app_id:   ${{ steps.set-app-id-output.outputs.contrast_app_id }}
@@ -188,7 +226,9 @@ jobs:
       - name: Run Contrast Module Identifier
         uses: docker://contrast/module-identifier:v1
         with:
-          args: /github/workspace --single --debug
+          args: >-
+            /github/workspace --single --debug
+            ${{ needs.detect-languages.outputs.languages != '' && format('--languages "{0}"', needs.detect-languages.outputs.languages) || '' }}
         env:
           CONTRAST_HOST_NAME: ${{ inputs.contrast_host }}
           CONTRAST_ORG_ID: ${{ inputs.contrast_org_id }}
@@ -231,14 +271,16 @@ jobs:
           fi
 
   # ─────────────────────────────────────────────────────────────────────
-  # JOB 2: Run SmartScan
+  # JOB 3: Run SmartScan
   # SAST scanner — runs on every trigger event.
   # Skipped if disable_smartscan is 'true'.
   # Uses contrast/smartscan:v1 public DockerHub image — no credentials required.
   # ─────────────────────────────────────────────────────────────────────
   run-contrast-code:
     name: Run Contrast Code
-    needs: detect-app-data
+    needs:
+      - detect-languages
+      - detect-app-data
     if: |
       inputs.disable_smartscan != 'true' &&
       (
@@ -261,21 +303,6 @@ jobs:
           role-to-assume:        ${{ secrets.AWS_ROLE_TO_ASSUME }}
           aws-region:            ${{ inputs.aws_region }}
 
-      - name: Get Repository Languages
-        id: get_repo_langs
-        uses: octokit/request-action@v2.4.0
-        with:
-          route: GET /repos/${{ inputs.repo_name }}/languages
-        env:
-          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
-
-      - name: Set Repo Language Info
-        run: |
-          echo '${{ steps.get_repo_langs.outputs.data }}' \
-            | jq -r 'to_entries[] | [.[]] | join(",")' \
-            | tr '\n' '|' \
-            | xargs -I '{}' echo "REPO_LANG_INFO={}" >> $GITHUB_ENV
-
       - name: Set Branch Name
         run: |
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
@@ -289,7 +316,7 @@ jobs:
         env:
           LOGLEVEL: 'DEBUG'
           REPO_NAME: ${{ github.event.repository.name }}
-          REPO_LANG_INFO: ${{ env.REPO_LANG_INFO }}
+          REPO_LANG_INFO: ${{ needs.detect-languages.outputs.repo_lang_info }}
           REPO_HTTP_URL: ${{ inputs.repo_url }}/${{ inputs.repo_name }}
           BRANCH_NAME: ${{ env.BRANCH_NAME }}
           DEFAULT_BRANCH: ${{ inputs.base_branch }}
@@ -308,7 +335,7 @@ jobs:
           APPLICATION_DIR: ${{ github.workspace }}
 
   # ─────────────────────────────────────────────────────────────────────
-  # JOB 3: Run SmartSCA
+  # JOB 4: Run SmartSCA
   # SCA dependency scanning. Disabled by default for EA.
   # Will be enabled once contrast/smart-sca:v1 is delivered by the SCA team.
   # ─────────────────────────────────────────────────────────────────────
@@ -333,7 +360,7 @@ jobs:
           GITHUB_REPOSITORY:                 ${{ inputs.repo_name }}
 
   # ─────────────────────────────────────────────────────────────────────
-  # JOB 4: Run SmartFix
+  # JOB 5: Run SmartFix
   # AI-powered fix PR generation. Event-gated — only runs on:
   #   • pull_request (closed) — handles merge notification or PR close
   #   • workflow_dispatch     — manual trigger to generate fixes
