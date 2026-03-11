@@ -213,15 +213,17 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      #- name: Configure AWS Credentials
-        #if: ${{ inputs.use_aws == 'true' && inputs.aws_region != '' }}
-        #uses: aws-actions/configure-aws-credentials@v5
-        #with:
-          #aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-          #aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          #aws-session-token:     ${{ secrets.AWS_SESSION_TOKEN }}
-          #role-to-assume:        ${{ secrets.AWS_ROLE_TO_ASSUME }}
-          #aws-region:            ${{ inputs.aws_region }}
+      - name: Configure AWS Credentials
+        if: ${{ inputs.use_aws == 'true' && inputs.aws_region != '' }}
+        id: aws-credentials
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          output-credentials: true
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token:     ${{ secrets.AWS_SESSION_TOKEN }}
+          role-to-assume:        ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region:            ${{ inputs.aws_region }}
 
       - name: Run Contrast Module Identifier
         uses: docker://contrast/module-identifier:v1
@@ -234,6 +236,11 @@ jobs:
           CONTRAST_ORG_ID: ${{ inputs.contrast_org_id }}
           CONTRAST_API_KEY: ${{ secrets.CONTRAST_API_KEY }}
           CONTRAST_AUTHORIZATION_KEY: ${{ secrets.CONTRAST_AUTHORIZATION_KEY }}
+          AWS_ACCESS_KEY_ID: ${{ steps.aws-credentials.outputs.aws-access-key-id }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.aws-credentials.outputs.aws-secret-access-key }}
+          AWS_SESSION_TOKEN: ${{ steps.aws-credentials.outputs.aws-session-token }}
+          AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          AWS_REGION: ${{ inputs.aws_region }}
 
       - name: Validate Application ID and Set Output
         id: set-app-id-output
@@ -293,15 +300,15 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Configure AWS Credentials
-        if: ${{ inputs.use_aws == 'true' && inputs.aws_region != '' }}
-        uses: aws-actions/configure-aws-credentials@v5
-        with:
-          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token:     ${{ secrets.AWS_SESSION_TOKEN }}
-          role-to-assume:        ${{ secrets.AWS_ROLE_TO_ASSUME }}
-          aws-region:            ${{ inputs.aws_region }}
+      #- name: Configure AWS Credentials
+        #if: ${{ inputs.use_aws == 'true' && inputs.aws_region != '' }}
+        #uses: aws-actions/configure-aws-credentials@v5
+        #with:
+          #aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          #aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          #aws-session-token:     ${{ secrets.AWS_SESSION_TOKEN }}
+          #role-to-assume:        ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          #aws-region:            ${{ inputs.aws_region }}
 
       - name: Set Branch Name
         run: |
@@ -394,6 +401,7 @@ jobs:
         if: ${{ inputs.use_aws == 'true' && inputs.aws_region != '' }}
         uses: aws-actions/configure-aws-credentials@v5
         with:
+          output-env-credentials: true
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-session-token:     ${{ secrets.AWS_SESSION_TOKEN }}
@@ -403,6 +411,7 @@ jobs:
       - name: ${{ steps.job_type.outputs.label }}
         uses: Contrast-Security-OSS/contrast-ai-smartfix-action@v1
         with:
+          aws_region:                 ${{ inputs.aws_region }}
           contrast_host:              ${{ inputs.contrast_host }}
           contrast_org_id:            ${{ inputs.contrast_org_id }}
           contrast_app_id:            ${{ needs.detect-app-data.outputs.contrast_app_id || inputs.contrast_application_id}}
@@ -416,7 +425,6 @@ jobs:
           azure_api_version:          ${{ inputs.azure_api_version }}
           enable_full_telemetry:      ${{ inputs.enable_full_telemetry }}
           debug_mode:                 ${{ inputs.debug_mode }}
-          aws_region:                 ${{ inputs.aws_region }}
           contrast_api_key:           ${{ secrets.CONTRAST_API_KEY }}
           contrast_authorization_key: ${{ secrets.CONTRAST_AUTHORIZATION_KEY }}
           github_token:               ${{ secrets.GH_TOKEN }}
@@ -424,3 +432,4 @@ jobs:
           anthropic_api_key:          ${{ secrets.ANTHROPIC_API_KEY }}
           azure_api_key:              ${{ secrets.AZURE_API_KEY }}
           aws_bearer_token_bedrock:   ${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}
+s
