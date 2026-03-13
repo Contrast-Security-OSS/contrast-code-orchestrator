@@ -205,10 +205,12 @@ jobs:
   detect-app-data:
     name: Detect Contrast Application Data
     needs: detect-languages
+    if: |
+      ${{ inputs.disable_smartscan != 'true' || inputs.disable_smartfix != 'true' }}
     runs-on: ${{ inputs.github_runner }}
     outputs:
-      contrast_app_id:   ${{ steps.set-app-id-output.outputs.contrast_app_id }}
-      contrast_app_name: ${{ steps.set-app-name-output.outputs.contrast_app_name }}
+      contrast_app_id:   ${{ steps.set-app-data-outputs.outputs.contrast_app_id }}
+      contrast_app_name: ${{ steps.set-app-data-outputs.outputs.contrast_app_name }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -242,37 +244,16 @@ jobs:
           AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_TO_ASSUME }}
           AWS_REGION: ${{ inputs.aws_region }}
 
-      - name: Validate Application ID and Set Output
-        id: set-app-id-output
+      - name: Set Contrast Application Data Outputs
+        id: set-app-data-outputs
         shell: bash
         run: |
           if [[ -n "$CONTRAST_APP_ID" && "$CONTRAST_APP_ID" != "null" ]]; then
             echo "Successfully detected contrast application ID: $CONTRAST_APP_ID"
-          elif [[ -n "${{ inputs.contrast_application_id }}" ]]; then
-            echo "Auto-detection did not find an contrast application ID. Using contrast_application_id input override."
-            CONTRAST_APP_ID="${{ inputs.contrast_application_id }}"
-            echo "CONTRAST_APP_ID=$CONTRAST_APP_ID" >> $GITHUB_ENV
-          else
-            echo "Contrast application ID could not be automatically detected for repository '${{ inputs.repo_name }}'."
-            echo ""
-            echo "Set CONTRAST_APP_ID manually:"
-            echo "  1. Browse your applications: ${{ inputs.contrast_host }}/Contrast/static/ng/index.html#/${{ inputs.contrast_org_id }}/applications"
-            echo "  2. Select your application"
-            echo "  3. The ID is the UUID after applications/ in the URL"
-            echo "     e.g. applications/057254e6-f065-40fa-8197-e1d7ace10e67"
-          fi
-
-          if [[ -n "$CONTRAST_APP_ID" && "$CONTRAST_APP_ID" != "null" ]]; then
             echo "contrast_app_id=$CONTRAST_APP_ID" >> $GITHUB_OUTPUT
           fi
 
-      - name: Validate Application Name and Set Output
-        id: set-app-name-output
-        shell: bash
-        run: |
-          if [[ -z "$CONTRAST_APP_NAME" || "$CONTRAST_APP_NAME" == "null" ]]; then
-            echo "Contrast application name could not be automatically detected for repository '${{ inputs.repo_name }}'."
-          else
+          if [[ -n "$CONTRAST_APP_NAME" && "$CONTRAST_APP_NAME" != "null" ]]; then
             echo "Successfully detected application name: $CONTRAST_APP_NAME"
             echo "contrast_app_name=$CONTRAST_APP_NAME" >> $GITHUB_OUTPUT
           fi
@@ -297,6 +278,15 @@ jobs:
       )
     runs-on: ${{ inputs.github_runner }}
     steps:
+      - name: Validate Application Name
+        shell: bash
+        run: |
+          APP_NAME="${{ needs.detect-app-data.outputs.contrast_app_name }}"
+          if [[ -z "$APP_NAME" || "$APP_NAME" == "null" ]]; then
+            echo "::error::Contrast application name could not be automatically detected for repository '${{ inputs.repo_name }}'."
+            exit 1
+          fi
+
       - name: Checkout Repository
         uses: actions/checkout@v4
 
@@ -386,6 +376,21 @@ jobs:
       )
     runs-on: ${{ inputs.github_runner }}
     steps:
+      - name: Validate Application ID
+        shell: bash
+        run: |
+          APP_ID="${{ needs.detect-app-data.outputs.contrast_app_id || inputs.contrast_application_id }}"
+          if [[ -z "$APP_ID" || "$APP_ID" == "null" ]]; then
+            echo "::error::Contrast application ID could not be automatically detected for repository '${{ inputs.repo_name }}'."
+            echo ""
+            echo "Set CONTRAST_APP_ID manually:"
+            echo "  1. Browse your applications: ${{ inputs.contrast_host }}/Contrast/static/ng/index.html#/${{ inputs.contrast_org_id }}/applications"
+            echo "  2. Select your application"
+            echo "  3. The ID is the UUID after applications/ in the URL"
+            echo "     e.g. applications/057254e6-f065-40fa-8197-e1d7ace10e67"
+            exit 1
+          fi
+
       - name: Determine SmartFix Job Type
         id: job_type
         run: |
