@@ -1,13 +1,13 @@
-name: Contrast Code Orchestrator
+name: Contrast CI
 
 on:
   workflow_call:
     inputs:
       # --- Contrast Platform (required) ---
-      contrast_host:
+      api_host:
         required: true
         type: string
-        description: Contrast Platform base URL
+        description: Contrast Platform base API URL
       contrast_org_id:
         required: true
         type: string
@@ -49,14 +49,14 @@ on:
         description: Repository full name (owner/repo)
 
       # --- EA Product Disable Flags ---
-      disable_smartscan:
+      disable_contrast_code:
         type: string
         default: 'false'
-        description: Set to true to skip SmartScan for this repo
-      disable_smartsca:
+        description: Set to true to skip Contrast Code for this repo
+      disable_contrast_sca:
         type: string
         default: 'false'
-        description: Set to true to skip SmartSCA for this repo
+        description: Set to true to skip Static SCA scan for this repo
       disable_smartfix:
         type: string
         default: 'false'
@@ -120,7 +120,7 @@ on:
       CONTRAST_API_KEY:
         description: The contrast API key
         required: true
-      CONTRAST_AUTHORIZATION_KEY:
+      CONTRAST_AUTHORIZATION:
         description: The contrast authorization key
         required: true
       GH_TOKEN:
@@ -138,6 +138,9 @@ on:
       AWS_BEARER_TOKEN_BEDROCK:
         description: The AWS Bedrock API key
         required: false
+      AWS_ROLE_TO_ASSUME:
+        description: The AWS role to assume
+        required: false
       AWS_ACCESS_KEY_ID:
         description: The AWS access key id
         required: false
@@ -146,9 +149,6 @@ on:
         required: false
       AWS_SESSION_TOKEN:
         description: The AWS session token
-        required: false
-      AWS_ROLE_TO_ASSUME:
-        description: The AWS role to assume
         required: false
 
 permissions:
@@ -162,10 +162,10 @@ jobs:
   # JOB 1: Detect Repository Languages
   # Calls the GitHub Languages API to detect repository languages.
   # Outputs both comma-separated names (for module-identifier --languages)
-  # and pipe-delimited format (for SmartScan REPO_LANG_INFO).
+  # and pipe-delimited format (for Contrast Code REPO_LANG_INFO).
   # ─────────────────────────────────────────────────────────────────────
   detect-languages:
-    name: Detect Repository Languages
+    name: Detect Languages
     runs-on: ${{ inputs.github_runner }}
     outputs:
       languages: ${{ steps.parse-langs.outputs.languages }}
@@ -190,23 +190,19 @@ jobs:
           echo "languages=$LANGUAGES" >> $GITHUB_OUTPUT
           echo "Detected languages: $LANGUAGES"
 
-          # Pipe-delimited format for SmartScan (Lang,Bytes|Lang,Bytes|)
+          # Pipe-delimited format for Contrast Code (Lang,Bytes|Lang,Bytes|)
           REPO_LANG_INFO=$(echo "$LANG_JSON" | jq -r 'to_entries[] | "\(.key),\(.value)"' | tr '\n' '|')
           echo "repo_lang_info=$REPO_LANG_INFO" >> $GITHUB_OUTPUT
           echo "Repo lang info: $REPO_LANG_INFO"
 
   # ─────────────────────────────────────────────────────────────────────
-  # JOB 2: Detect Contrast Application Data
-  # Runs contrast/module-identifier:v1 to resolve the Contrast app ID/Name
-  # for this repository. The container writes CONTRAST_APP_ID / CONTRAST_APP_Name
-  # to $GITHUB_ENV. The validate step forwards it to $GITHUB_OUTPUT so
-  # downstream jobs can consume it.
+  # JOB 2: Detect Contrast Applications
   # ─────────────────────────────────────────────────────────────────────
   detect-app-data:
-    name: Detect Contrast Application Data
+    name: Detect Applications
     needs: detect-languages
     if: |
-      ${{ inputs.disable_smartscan != 'true' || inputs.disable_smartfix != 'true' }}
+      ${{ inputs.disable_contrast_code != 'true' || inputs.disable_smartfix != 'true' }}
     runs-on: ${{ inputs.github_runner }}
     outputs:
       contrast_app_id:   ${{ steps.set-app-data-outputs.outputs.contrast_app_id }}
@@ -234,10 +230,10 @@ jobs:
             /github/workspace --single --debug
             ${{ needs.detect-languages.outputs.languages != '' && format('--languages "{0}"', needs.detect-languages.outputs.languages) || '' }}
         env:
-          CONTRAST_HOST_NAME: ${{ inputs.contrast_host }}
+          CONTRAST_HOST_NAME: ${{ inputs.api_host }}
           CONTRAST_ORG_ID: ${{ inputs.contrast_org_id }}
           CONTRAST_API_KEY: ${{ secrets.CONTRAST_API_KEY }}
-          CONTRAST_AUTHORIZATION_KEY: ${{ secrets.CONTRAST_AUTHORIZATION_KEY }}
+          CONTRAST_AUTHORIZATION_KEY: ${{ secrets.CONTRAST_AUTHORIZATION }}
           AWS_ACCESS_KEY_ID: ${{ steps.aws-credentials.outputs.aws-access-key-id }}
           AWS_SECRET_ACCESS_KEY: ${{ steps.aws-credentials.outputs.aws-secret-access-key }}
           AWS_SESSION_TOKEN: ${{ steps.aws-credentials.outputs.aws-session-token }}
@@ -259,18 +255,16 @@ jobs:
           fi
 
   # ─────────────────────────────────────────────────────────────────────
-  # JOB 3: Run SmartScan
-  # SAST scanner — runs on every trigger event.
-  # Skipped if disable_smartscan is 'true'.
-  # Uses contrast/smartscan:v1 public DockerHub image — no credentials required.
+  # JOB 3: Run Contrast Code Scanner
+  # Skipped if disable_contrast_code is 'true'.
   # ─────────────────────────────────────────────────────────────────────
   run-contrast-code:
-    name: Run Contrast Code
+    name: Code - SAST
     needs:
       - detect-languages
       - detect-app-data
     if: |
-      inputs.disable_smartscan != 'true' &&
+      inputs.disable_contrast_code != 'true' &&
       (
         github.event_name == 'workflow_dispatch' ||
         (github.event_name == 'pull_request' && (github.event.action == 'opened' || github.event.action == 'synchronize')) ||
@@ -323,41 +317,50 @@ jobs:
           TAG: ${{ github.ref }}
           RUN_ID: ${{ github.run_id }}
           WORKFLOW_ID: ${{ github.workflow_sha }}
-          CONTRAST_BASE_URL: ${{ inputs.contrast_host }}
+          CONTRAST_BASE_URL: ${{ inputs.api_host }}
           CONTRAST_ORG_ID: ${{ inputs.contrast_org_id }}
           CONTRAST_API_KEY: ${{ secrets.CONTRAST_API_KEY }}
-          CONTRAST_AUTHORIZATION: ${{ secrets.CONTRAST_AUTHORIZATION_KEY }}
+          CONTRAST_AUTHORIZATION: ${{ secrets.CONTRAST_AUTHORIZATION }}
           RUN_TRIAGE: ${{ inputs.run_triage }}
           TRIAGE_DURATION: ${{ inputs.triage_duration }}
           APPLICATION_DIR: ${{ github.workspace }}
 
   # ─────────────────────────────────────────────────────────────────────
-  # JOB 4: Run SmartSCA
-  # SCA dependency scanning. Disabled by default for EA.
-  # Will be enabled once contrast/smart-sca:v1 is delivered by the SCA team.
+  # JOB 4: Run Contrast SCA
+  # SCA dependency scanning. Skipped if disable_contrast_sca is 'true'.
   # ─────────────────────────────────────────────────────────────────────
   run-sca:
-    name: Run SmartSCA
+    name: Code - Static SCA
     needs: detect-app-data
-    if: ${{ inputs.disable_smartsca != 'true' }}
+    if: ${{ inputs.disable_contrast_sca != 'true' }}
     runs-on: ${{ inputs.github_runner }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Run SmartSCA
-        uses: docker://dougjeremias489/contrast-sca-cli
+      - name: Run Contrast Code Static SCA Scanner
+        uses: docker://contrast/sca-smartai
+        with:
+          args: >-
+            contrast-sca scan /github/workspace --output /github/workspace/sbom.json --debug /github/workspace/sbom.debug
         env:
-          CONTRAST_HOST:                     ${{ inputs.contrast_host }}
-          CONTRAST_ORG_ID:                   ${{ inputs.contrast_org_id }}
-          CONTRAST_APP_INSTALLATION_ID:      ${{ inputs.contrast_app_install_id }}
-          CONTRAST_API_KEY:                  ${{ secrets.CONTRAST_API_KEY }}
-          CONTRAST_AUTHORIZATION:            ${{ secrets.CONTRAST_AUTHORIZATION_KEY }}
-          GITHUB_SERVER_URL:                 ${{ inputs.repo_url }}
-          GITHUB_REPOSITORY:                 ${{ inputs.repo_name }}
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+          CDXGEN_DEBUG_MODE: 'true'
+
+      - name: Archive SBOM results
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: sbom-output
+          path: /github/workspace/sbom*
+
+      - name: Upload SBOM to Contrast
+        run: |
+          ls -la /github/workspace/sbom.json
+          curl -v -X POST "${{ inputs.api_host }}/api/sca/v1/organizations/${{ inputs.contrast_org_id }}/sbom" -H "API-Key: ${{ secrets.CONTRAST_API_KEY }}" -H "Authorization: ${{ secrets.CONTRAST_AUTHORIZATION }}" -F "file=@/github/workspacep/sbom.json;type=application/json"
+
 
   # ─────────────────────────────────────────────────────────────────────
-  # JOB 5: Run SmartFix
+  # JOB 5: Run Contrast SmartFix
   # AI-powered fix PR generation. Event-gated — only runs on:
   #   • pull_request (closed) — handles merge notification or PR close
   #   • workflow_dispatch     — manual trigger to generate fixes
@@ -365,7 +368,7 @@ jobs:
   # Does NOT run on PR open/synchronize to avoid redundant runs.
   # ─────────────────────────────────────────────────────────────────────
   run-smartfix:
-    name: Run SmartFix
+    name: SmartFix
     needs: detect-app-data
     if: |
       inputs.disable_smartfix != 'true' &&
@@ -384,7 +387,7 @@ jobs:
             echo "::error::Contrast application ID could not be automatically detected for repository '${{ inputs.repo_name }}'."
             echo ""
             echo "Set CONTRAST_APP_ID manually:"
-            echo "  1. Browse your applications: ${{ inputs.contrast_host }}/Contrast/static/ng/index.html#/${{ inputs.contrast_org_id }}/applications"
+            echo "  1. Browse your applications: ${{ inputs.api_host }}/Contrast/static/ng/index.html#/${{ inputs.contrast_org_id }}/applications"
             echo "  2. Select your application"
             echo "  3. The ID is the UUID after applications/ in the URL"
             echo "     e.g. applications/057254e6-f065-40fa-8197-e1d7ace10e67"
@@ -417,7 +420,7 @@ jobs:
         uses: Contrast-Security-OSS/contrast-ai-smartfix-action@v1
         with:
           aws_region:                 ${{ inputs.aws_region }}
-          contrast_host:              ${{ inputs.contrast_host }}
+          contrast_host:              ${{ inputs.api_host }}
           contrast_org_id:            ${{ inputs.contrast_org_id }}
           contrast_app_id:            ${{ needs.detect-app-data.outputs.contrast_app_id || inputs.contrast_application_id}}
           base_branch:                ${{ inputs.base_branch }}
@@ -431,7 +434,7 @@ jobs:
           enable_full_telemetry:      ${{ inputs.enable_full_telemetry }}
           debug_mode:                 ${{ inputs.debug_mode }}
           contrast_api_key:           ${{ secrets.CONTRAST_API_KEY }}
-          contrast_authorization_key: ${{ secrets.CONTRAST_AUTHORIZATION_KEY }}
+          contrast_authorization_key: ${{ secrets.CONTRAST_AUTHORIZATION }}
           github_token:               ${{ secrets.GH_TOKEN }}
           gemini_api_key:             ${{ secrets.GEMINI_API_KEY }}
           anthropic_api_key:          ${{ secrets.ANTHROPIC_API_KEY }}
