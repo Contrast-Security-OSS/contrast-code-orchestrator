@@ -31,7 +31,7 @@ on:
       triage_duration:
         required: false
         type: string
-        default: '1m'
+        default: '20s'
         description: Duration to run the contrast-triage tool (e.g. '1m', '5m').
 
       # --- Repo Context (required) ---
