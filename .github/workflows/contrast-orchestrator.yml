@@ -63,6 +63,11 @@ on:
         description: Set to true to skip SmartFix for this repo
 
       # --- SmartFix Config ---
+      coding_agent:
+        description: 'Specifies the coding agent to use for generating fixes. Allowed values: SMARTFIX, GITHUB_COPILOT, CLAUDE_CODE.'
+        type: string
+        required: false
+        default: 'SMARTFIX'
       build_command:
         description: 'Build command to run before SmartFix'
         type: string
@@ -254,6 +259,18 @@ jobs:
             echo "contrast_app_name=$CONTRAST_APP_NAME" >> $GITHUB_OUTPUT
           fi
 
+      - name: Warn if Application ID Not Found
+        if: ${{ steps.set-app-data-outputs.outputs.contrast_app_id == '' && inputs.contrast_application_id == '' }}
+        shell: bash
+        run: |
+          echo "::warning::Contrast application ID could not be automatically detected for repository '${{ inputs.repo_name }}'. SmartFix will be skipped."
+          echo ""
+          echo "To set the application ID manually, add 'contrast_application_id' to your workflow inputs:"
+          echo "  1. Browse your applications: ${{ inputs.api_host }}/Contrast/static/ng/index.html#/${{ inputs.contrast_org_id }}/applications"
+          echo "  2. Select your application"
+          echo "  3. The ID is the UUID after applications/ in the URL"
+          echo "     e.g. applications/057254e6-f065-40fa-8197-e1d7ace10e67"
+
   # ─────────────────────────────────────────────────────────────────────
   # JOB 3: Run Contrast Code Scanner
   # Skipped if disable_contrast_code is 'true'.
@@ -373,28 +390,21 @@ jobs:
     needs: detect-app-data
     if: |
       inputs.disable_smartfix != 'true' &&
+      (needs.detect-app-data.outputs.contrast_app_id != '' || inputs.contrast_application_id != '') &&
       (
         github.event_name == 'workflow_dispatch' ||
         github.event_name == 'schedule' ||
-        (github.event_name == 'pull_request' && github.event.action == 'closed')
+        (
+          github.event_name == 'pull_request' && github.event.action == 'closed' &&
+          (
+            contains(github.event.pull_request.head.ref, 'smartfix/remediation-') ||
+            contains(github.event.pull_request.head.ref, 'copilot/fix-') ||
+            contains(github.event.pull_request.head.ref, 'claude/issue-')
+          )
+        )
       )
     runs-on: ${{ inputs.github_runner }}
     steps:
-      - name: Validate Application ID
-        shell: bash
-        run: |
-          APP_ID="${{ needs.detect-app-data.outputs.contrast_app_id || inputs.contrast_application_id }}"
-          if [[ -z "$APP_ID" || "$APP_ID" == "null" ]]; then
-            echo "::error::Contrast application ID could not be automatically detected for repository '${{ inputs.repo_name }}'."
-            echo ""
-            echo "Set CONTRAST_APP_ID manually:"
-            echo "  1. Browse your applications: ${{ inputs.api_host }}/Contrast/static/ng/index.html#/${{ inputs.contrast_org_id }}/applications"
-            echo "  2. Select your application"
-            echo "  3. The ID is the UUID after applications/ in the URL"
-            echo "     e.g. applications/057254e6-f065-40fa-8197-e1d7ace10e67"
-            exit 1
-          fi
-
       - name: Determine SmartFix Job Type
         id: job_type
         run: |
@@ -434,6 +444,7 @@ jobs:
           azure_api_version:          ${{ inputs.azure_api_version }}
           enable_full_telemetry:      ${{ inputs.enable_full_telemetry }}
           debug_mode:                 ${{ inputs.debug_mode }}
+          coding_agent:               ${{ inputs.coding_agent }}
           contrast_api_key:           ${{ secrets.CONTRAST_API_KEY }}
           contrast_authorization_key: ${{ secrets.CONTRAST_AUTHORIZATION }}
           github_token:               ${{ secrets.GH_TOKEN }}
