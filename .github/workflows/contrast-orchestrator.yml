@@ -231,6 +231,7 @@ jobs:
             /github/workspace --single --debug
             ${{ needs.detect-languages.outputs.languages != '' && format('--languages "{0}"', needs.detect-languages.outputs.languages) || '' }}
         env:
+          GITHUB_DEFAULT_BRANCH: ${{ inputs.base_branch }}
           CONTRAST_HOST_NAME: ${{ inputs.api_host }}
           CONTRAST_ORG_ID: ${{ inputs.contrast_org_id }}
           CONTRAST_API_KEY: ${{ secrets.CONTRAST_API_KEY }}
