@@ -166,6 +166,18 @@ jobs:
   # and pipe-delimited format (for Contrast Code REPO_LANG_INFO).
   # ─────────────────────────────────────────────────────────────────────
   detect-languages:
+    if: |
+      github.event_name == 'push' ||
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event_name == 'pull_request' && github.event.action == 'closed' &&
+        (
+          contains(github.event.pull_request.head.ref, 'smartfix/remediation-') ||
+          contains(github.event.pull_request.head.ref, 'copilot/fix-') ||
+          contains(github.event.pull_request.head.ref, 'claude/issue-')
+        )
+      )
     name: Detect Languages
     runs-on: ${{ inputs.github_runner }}
     outputs:
@@ -203,7 +215,20 @@ jobs:
     name: Detect Applications
     needs: detect-languages
     if: |
-      ${{ inputs.disable_contrast_code != 'true' || inputs.disable_smartfix != 'true' }}
+      (inputs.disable_contrast_code != 'true' || inputs.disable_smartfix != 'true') &&
+      (
+        github.event_name == 'push' ||
+        github.event_name == 'schedule' ||
+        github.event_name == 'workflow_dispatch' ||
+        (
+          github.event_name == 'pull_request' && github.event.action == 'closed' &&
+          (
+            contains(github.event.pull_request.head.ref, 'smartfix/remediation-') ||
+            contains(github.event.pull_request.head.ref, 'copilot/fix-') ||
+            contains(github.event.pull_request.head.ref, 'claude/issue-')
+          )
+        )
+      )
     runs-on: ${{ inputs.github_runner }}
     outputs:
       contrast_app_id:   ${{ steps.set-app-data-outputs.outputs.contrast_app_id }}
