@@ -160,60 +160,13 @@ permissions:
 jobs:
 
   # ─────────────────────────────────────────────────────────────────────
-  # JOB 1: Detect Repository Languages
-  # Calls the GitHub Languages API to detect repository languages.
-  # Outputs both comma-separated names (for module-identifier --languages)
-  # and pipe-delimited format (for Contrast Code REPO_LANG_INFO).
+  # JOB 1: Resolve Applications via Contrast Recon + Resolver
+  # Runs contrast-recon to discover repository modules, then pipes the
+  # manifest to contrast-resolver to resolve modules to Contrast
+  # application IDs. Replaces the former module-identifier step.
   # ─────────────────────────────────────────────────────────────────────
-  detect-languages:
-    if: |
-      github.event_name == 'push' ||
-      github.event_name == 'schedule' ||
-      github.event_name == 'workflow_dispatch' ||
-      (
-        github.event_name == 'pull_request' && github.event.action == 'closed' &&
-        (
-          contains(github.event.pull_request.head.ref, 'smartfix/remediation-') ||
-          contains(github.event.pull_request.head.ref, 'copilot/fix-') ||
-          contains(github.event.pull_request.head.ref, 'claude/issue-')
-        )
-      )
-    name: Detect Languages
-    runs-on: ${{ inputs.github_runner }}
-    outputs:
-      languages: ${{ steps.parse-langs.outputs.languages }}
-      repo_lang_info: ${{ steps.parse-langs.outputs.repo_lang_info }}
-    steps:
-      - name: Get Repository Languages
-        id: get-repo-langs
-        uses: octokit/request-action@dad4362715b7fb2ddedf9772c8670824af564f0d # v2.4.0
-        with:
-          route: GET /repos/${{ inputs.repo_name }}/languages
-        env:
-          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
-
-      - name: Parse Language Data
-        id: parse-langs
-        shell: bash
-        run: |
-          LANG_JSON='${{ steps.get-repo-langs.outputs.data }}'
-
-          # Comma-separated language names for --languages
-          LANGUAGES=$(echo "$LANG_JSON" | jq -r 'keys | join(",")')
-          echo "languages=$LANGUAGES" >> $GITHUB_OUTPUT
-          echo "Detected languages: $LANGUAGES"
-
-          # Pipe-delimited format for Contrast Code (Lang,Bytes|Lang,Bytes|)
-          REPO_LANG_INFO=$(echo "$LANG_JSON" | jq -r 'to_entries[] | "\(.key),\(.value)"' | tr '\n' '|')
-          echo "repo_lang_info=$REPO_LANG_INFO" >> $GITHUB_OUTPUT
-          echo "Repo lang info: $REPO_LANG_INFO"
-
-  # ─────────────────────────────────────────────────────────────────────
-  # JOB 2: Detect Contrast Applications
-  # ─────────────────────────────────────────────────────────────────────
-  detect-app-data:
-    name: Detect Applications
-    needs: detect-languages
+  contrast-recon-resolve:
+    name: Resolve Applications
     if: |
       (inputs.disable_contrast_code != 'true' || inputs.disable_smartfix != 'true') &&
       (
@@ -231,8 +184,9 @@ jobs:
       )
     runs-on: ${{ inputs.github_runner }}
     outputs:
-      contrast_app_id:   ${{ steps.set-app-data-outputs.outputs.contrast_app_id }}
-      contrast_app_name: ${{ steps.set-app-data-outputs.outputs.contrast_app_name }}
+      contrast_ci_manifest: ${{ steps.set-outputs.outputs.contrast_ci_manifest }}
+      contrast_app_ids:     ${{ steps.set-outputs.outputs.contrast_app_ids }}
+      contrast_app_name:    ${{ steps.set-outputs.outputs.contrast_app_name }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -249,59 +203,88 @@ jobs:
           role-to-assume:        ${{ secrets.AWS_ROLE_TO_ASSUME }}
           aws-region:            ${{ inputs.aws_region }}
 
-      - name: Run Contrast Module Identifier
-        uses: docker://contrast/module-identifier:v1
-        with:
-          args: >-
-            /github/workspace --single --debug
-            ${{ needs.detect-languages.outputs.languages != '' && format('--languages "{0}"', needs.detect-languages.outputs.languages) || '' }}
+      - name: Run Contrast Recon and Resolver
+        id: resolve
         env:
-          GITHUB_DEFAULT_BRANCH: ${{ inputs.base_branch }}
           CONTRAST_HOST_NAME: ${{ inputs.api_host }}
           CONTRAST_ORG_ID: ${{ inputs.contrast_org_id }}
           CONTRAST_API_KEY: ${{ secrets.CONTRAST_API_KEY }}
-          CONTRAST_AUTHORIZATION_KEY: ${{ secrets.CONTRAST_AUTHORIZATION }}
-          AWS_ACCESS_KEY_ID: ${{ steps.aws-credentials.outputs.aws-access-key-id }}
-          AWS_SECRET_ACCESS_KEY: ${{ steps.aws-credentials.outputs.aws-secret-access-key }}
-          AWS_SESSION_TOKEN: ${{ steps.aws-credentials.outputs.aws-session-token }}
-          AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-          AWS_REGION: ${{ inputs.aws_region }}
+          CONTRAST_AUTH_TOKEN: ${{ secrets.CONTRAST_AUTHORIZATION }}
+          GITHUB_DEFAULT_BRANCH: ${{ inputs.base_branch }}
+        run: |
+          CONTRAST_CI_MANIFEST=$(docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            -v "${{ github.workspace }}:/workspace" \
+            contrast/contrast-recon:latest /workspace | \
+          docker run --rm -i \
+            --user "$(id -u):$(id -g)" \
+            -e CONTRAST_HOST_NAME \
+            -e CONTRAST_ORG_ID \
+            -e CONTRAST_API_KEY \
+            -e CONTRAST_AUTH_TOKEN \
+            -e GITHUB_DEFAULT_BRANCH \
+            -e GITHUB_ENV="$GITHUB_ENV" \
+            -v "$(dirname $GITHUB_ENV):$(dirname $GITHUB_ENV)" \
+            --entrypoint contrast-resolver \
+            contrast/contrast-recon:latest)
+
+          echo "Resolver output:"
+          echo "$CONTRAST_CI_MANIFEST" | jq .
+
+          # Write manifest to step output so set-outputs can read it
+          echo "contrast_ci_manifest<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$CONTRAST_CI_MANIFEST" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
 
       - name: Set Contrast Application Data Outputs
-        id: set-app-data-outputs
+        id: set-outputs
         shell: bash
         run: |
-          if [[ -n "$CONTRAST_APP_ID" && "$CONTRAST_APP_ID" != "null" ]]; then
-            echo "Successfully detected contrast application ID: $CONTRAST_APP_ID"
-            echo "contrast_app_id=$CONTRAST_APP_ID" >> $GITHUB_OUTPUT
+          CONTRAST_CI_MANIFEST='${{ steps.resolve.outputs.contrast_ci_manifest }}'
+
+          # Write manifest to job output using heredoc delimiter
+          echo "contrast_ci_manifest<<EOF" >> $GITHUB_OUTPUT
+          echo "$CONTRAST_CI_MANIFEST" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+          # CONTRAST_APP_IDS is written to $GITHUB_ENV by the resolver.
+          # Relay it to job output so downstream jobs can read it.
+          if grep -q '^CONTRAST_APP_IDS=' "$GITHUB_ENV" 2>/dev/null; then
+            APP_IDS=$(grep '^CONTRAST_APP_IDS=' "$GITHUB_ENV" | cut -d= -f2-)
+            echo "contrast_app_ids=$APP_IDS" >> $GITHUB_OUTPUT
+            echo "Resolved CONTRAST_APP_IDS: $APP_IDS"
+          else
+            echo "::warning::Resolver did not write CONTRAST_APP_IDS to GITHUB_ENV"
           fi
 
-          if [[ -n "$CONTRAST_APP_NAME" && "$CONTRAST_APP_NAME" != "null" ]]; then
-            echo "Successfully detected application name: $CONTRAST_APP_NAME"
-            echo "contrast_app_name=$CONTRAST_APP_NAME" >> $GITHUB_OUTPUT
+          # Extract first app name from resolver manifest for SAST backward compat
+          APP_NAME=$(echo "$CONTRAST_CI_MANIFEST" | jq -r '[.resolutions[] | select(.appId != null)] | first | .appName // empty')
+          if [[ -n "$APP_NAME" ]]; then
+            echo "contrast_app_name=$APP_NAME" >> $GITHUB_OUTPUT
+            echo "Resolved application name: $APP_NAME"
           fi
 
       - name: Warn if Application ID Not Found
-        if: ${{ steps.set-app-data-outputs.outputs.contrast_app_id == '' && inputs.contrast_application_id == '' }}
+        if: ${{ steps.set-outputs.outputs.contrast_app_ids == '' && inputs.contrast_application_id == '' }}
         shell: bash
         run: |
-          echo "::warning::Contrast application ID could not be automatically detected for repository '${{ inputs.repo_name }}'. SmartFix will be skipped."
-          echo ""
-          echo "To set the application ID manually, add 'contrast_application_id' to your workflow inputs:"
-          echo "  1. Browse your applications: ${{ inputs.api_host }}/Contrast/static/ng/index.html#/${{ inputs.contrast_org_id }}/applications"
-          echo "  2. Select your application"
-          echo "  3. The ID is the UUID after applications/ in the URL"
-          echo "     e.g. applications/057254e6-f065-40fa-8197-e1d7ace10e67"
+          MSG="Contrast application ID could not be automatically detected for repository '${{ inputs.repo_name }}'."
+          MSG="${MSG} SmartFix will be skipped."
+          MSG="${MSG}%0A%0ATo set the application ID manually, add 'contrast_application_id' to your workflow inputs:"
+          MSG="${MSG}%0A  1. Browse your applications:"
+          MSG="${MSG}%0A     ${{ inputs.api_host }}/Contrast/static/ng/index.html#/${{ inputs.contrast_org_id }}/applications"
+          MSG="${MSG}%0A  2. Select your application"
+          MSG="${MSG}%0A  3. The ID is the UUID after applications/ in the URL"
+          MSG="${MSG}%0A     e.g. applications/057254e6-f065-40fa-8197-e1d7ace10e67"
+          echo "::warning::${MSG}"
 
   # ─────────────────────────────────────────────────────────────────────
-  # JOB 3: Run Contrast Code Scanner
+  # JOB 2: Run Contrast Code Scanner
   # Skipped if disable_contrast_code is 'true'.
   # ─────────────────────────────────────────────────────────────────────
   run-contrast-code:
     name: Code - SAST
-    needs:
-      - detect-languages
-      - detect-app-data
+    needs: contrast-recon-resolve
     if: |
       inputs.disable_contrast_code != 'true' &&
       (github.event_name == 'push' && github.ref == format('refs/heads/{0}', inputs.base_branch))
@@ -310,10 +293,9 @@ jobs:
       - name: Validate Application Name
         shell: bash
         run: |
-          APP_NAME="${{ needs.detect-app-data.outputs.contrast_app_name }}"
+          APP_NAME="${{ needs.contrast-recon-resolve.outputs.contrast_app_name }}"
           if [[ -z "$APP_NAME" || "$APP_NAME" == "null" ]]; then
-            echo "::error::Contrast application name could not be automatically detected for repository '${{ inputs.repo_name }}'."
-            exit 1
+            echo "::warning::Contrast application name could not be automatically detected for repository '${{ inputs.repo_name }}'. Falling back to repository name."
           fi
 
       - name: Checkout Repository
@@ -329,6 +311,23 @@ jobs:
           #role-to-assume:        ${{ secrets.AWS_ROLE_TO_ASSUME }}
           #aws-region:            ${{ inputs.aws_region }}
 
+      - name: Get Repository Languages
+        id: get-repo-langs
+        uses: octokit/request-action@dad4362715b7fb2ddedf9772c8670824af564f0d # v2.4.0
+        with:
+          route: GET /repos/${{ inputs.repo_name }}/languages
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+
+      - name: Parse Language Data
+        id: parse-langs
+        shell: bash
+        run: |
+          LANG_JSON='${{ steps.get-repo-langs.outputs.data }}'
+          REPO_LANG_INFO=$(echo "$LANG_JSON" | jq -r 'to_entries[] | "\(.key),\(.value)"' | tr '\n' '|')
+          echo "repo_lang_info=$REPO_LANG_INFO" >> $GITHUB_OUTPUT
+          echo "Repo lang info: $REPO_LANG_INFO"
+
       - name: Set Branch Name
         run: |
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
@@ -340,13 +339,15 @@ jobs:
       - name: Run Contrast Code Scanner
         uses: docker://contrast/sast-smartai
         env:
+          # CONTRAST_CI_MANIFEST not yet supported by SAST container — uncomment when ready
+          # CONTRAST_CI_MANIFEST: ${{ needs.contrast-recon-resolve.outputs.contrast_ci_manifest }}
           LOGLEVEL: 'DEBUG'
           REPO_NAME: ${{ github.event.repository.name }}
-          REPO_LANG_INFO: ${{ needs.detect-languages.outputs.repo_lang_info }}
+          REPO_LANG_INFO: ${{ steps.parse-langs.outputs.repo_lang_info }}
           REPO_HTTP_URL: ${{ inputs.repo_url }}/${{ inputs.repo_name }}
           BRANCH_NAME: ${{ env.BRANCH_NAME }}
           DEFAULT_BRANCH: ${{ inputs.base_branch }}
-          APPLICATION_NAME: ${{ needs.detect-app-data.outputs.contrast_app_name }}
+          APPLICATION_NAME: ${{ needs.contrast-recon-resolve.outputs.contrast_app_name || github.event.repository.name }}
           COMMIT_HASH: ${{ github.sha }}
           COMMITTER: ${{ github.triggering_actor }}
           TAG: ${{ github.ref }}
@@ -361,12 +362,12 @@ jobs:
           APPLICATION_DIR: ${{ github.workspace }}
 
   # ─────────────────────────────────────────────────────────────────────
-  # JOB 4: Run Contrast SCA
+  # JOB 3: Run Contrast SCA
   # SCA dependency scanning. Skipped if disable_contrast_sca is 'true'.
   # ─────────────────────────────────────────────────────────────────────
   run-sca:
     name: Code - Static SCA
-    needs: detect-app-data
+    needs: contrast-recon-resolve
     if: |
       inputs.disable_contrast_sca != 'true' &&
       (github.event_name == 'push' && github.ref == format('refs/heads/{0}', inputs.base_branch))
@@ -384,6 +385,8 @@ jobs:
             -e CDXGEN_DEBUG_MODE=true \
             contrast/sca-smartai:latest \
             scan /var/app --output /tmp/sbom.json --debug /tmp/sbom.debug
+          # CONTRAST_CI_MANIFEST not yet supported by SCA container — uncomment when ready
+          # Add to docker run above: -e CONTRAST_CI_MANIFEST='${{ needs.contrast-recon-resolve.outputs.contrast_ci_manifest }}'
 
       - name: Archive SBOM results
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
@@ -400,7 +403,7 @@ jobs:
             -F "file=@/tmp/sbom.json;type=application/json"
 
   # ─────────────────────────────────────────────────────────────────────
-  # JOB 5: Run Contrast SmartFix
+  # JOB 4: Run Contrast SmartFix
   # AI-powered fix PR generation. Event-gated — only runs on:
   #   • pull_request (closed) — handles merge notification or PR close
   #   • workflow_dispatch     — manual trigger to generate fixes
@@ -409,10 +412,10 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   run-smartfix:
     name: SmartFix
-    needs: detect-app-data
+    needs: contrast-recon-resolve
     if: |
       inputs.disable_smartfix != 'true' &&
-      (needs.detect-app-data.outputs.contrast_app_id != '' || inputs.contrast_application_id != '') &&
+      (needs.contrast-recon-resolve.outputs.contrast_app_ids != '' || inputs.contrast_application_id != '') &&
       (
         github.event_name == 'workflow_dispatch' ||
         github.event_name == 'schedule' ||
@@ -455,7 +458,8 @@ jobs:
           aws_region:                 ${{ inputs.aws_region }}
           contrast_host:              ${{ inputs.api_host }}
           contrast_org_id:            ${{ inputs.contrast_org_id }}
-          contrast_app_id:            ${{ needs.detect-app-data.outputs.contrast_app_id || inputs.contrast_application_id}}
+          contrast_app_id:            ${{ inputs.contrast_application_id }}
+          contrast_app_ids:           ${{ needs.contrast-recon-resolve.outputs.contrast_app_ids }}
           base_branch:                ${{ inputs.base_branch }}
           build_command:              ${{ inputs.build_command }}
           formatting_command:         ${{ inputs.formatting_command }}
