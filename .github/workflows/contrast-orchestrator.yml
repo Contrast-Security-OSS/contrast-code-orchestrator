@@ -312,7 +312,7 @@ jobs:
 
       - name: Get Repository Languages
         id: get-repo-langs
-        uses: octokit/request-action@dad4362715b7fb2ddedf9772c8670824af564f0d # v2.4.0
+        uses: octokit/request-action@b91aabaa861c777dcdb14e2387e30eddf04619ae # v3.0.0
         with:
           route: GET /repos/${{ inputs.repo_name }}/languages
         env:
@@ -376,6 +376,8 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Run Contrast Code Static SCA Scanner
+      # CONTRAST_CI_MANIFEST not yet supported by SCA container — uncomment when ready
+      # Add to docker run above: -e CONTRAST_CI_MANIFEST=${{ needs.contrast-recon-resolve.outputs.contrast_ci_manifest }}
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/var/app:rw \
@@ -384,8 +386,6 @@ jobs:
             -e CDXGEN_DEBUG_MODE=true \
             contrast/sca-smartai:latest \
             scan /var/app --output /tmp/sbom.json --debug /tmp/sbom.debug
-          # CONTRAST_CI_MANIFEST not yet supported by SCA container — uncomment when ready
-          # Add to docker run above: -e CONTRAST_CI_MANIFEST='${{ needs.contrast-recon-resolve.outputs.contrast_ci_manifest }}'
 
       - name: Archive SBOM results
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
