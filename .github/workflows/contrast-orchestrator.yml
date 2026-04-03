@@ -253,7 +253,7 @@ jobs:
         uses: docker://contrast/module-identifier:v1
         with:
           args: >-
-            /github/workspace --single --debug
+            /github/workspace --single --debug --user "$(id -u):$(id -g)"
             ${{ needs.detect-languages.outputs.languages != '' && format('--languages "{0}"', needs.detect-languages.outputs.languages) || '' }}
         env:
           GITHUB_DEFAULT_BRANCH: ${{ inputs.base_branch }}
