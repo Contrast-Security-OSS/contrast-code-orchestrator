@@ -340,7 +340,7 @@ jobs:
         env:
           # CONTRAST_CI_MANIFEST not yet supported by SAST container — uncomment when ready
           # CONTRAST_CI_MANIFEST: ${{ needs.contrast-recon-resolve.outputs.contrast_ci_manifest }}
-          LOGLEVEL: 'DEBUG'
+          LOGLEVEL: ${{ runner.debug == '1' && 'DEBUG' || 'INFO' }}
           REPO_NAME: ${{ github.event.repository.name }}
           REPO_LANG_INFO: ${{ steps.parse-langs.outputs.repo_lang_info }}
           REPO_HTTP_URL: ${{ inputs.repo_url }}/${{ inputs.repo_name }}
