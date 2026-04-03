@@ -211,6 +211,7 @@ jobs:
           CONTRAST_ORG_ID: ${{ inputs.contrast_org_id }}
           CONTRAST_API_KEY: ${{ secrets.CONTRAST_API_KEY }}
           CONTRAST_AUTH_TOKEN: ${{ secrets.CONTRAST_AUTHORIZATION }}
+          GITHUB_DEFAULT_BRANCH: ${{ inputs.base_branch }}
         run: |
           CONTRAST_CI_MANIFEST=$(docker run --rm \
             -v "${{ github.workspace }}:/workspace" \
@@ -220,6 +221,7 @@ jobs:
             -e CONTRAST_ORG_ID \
             -e CONTRAST_API_KEY \
             -e CONTRAST_AUTH_TOKEN \
+            -e GITHUB_DEFAULT_BRANCH \
             -e GITHUB_ENV="$GITHUB_ENV" \
             -v "$(dirname $GITHUB_ENV):$(dirname $GITHUB_ENV)" \
             --entrypoint contrast-resolver \
