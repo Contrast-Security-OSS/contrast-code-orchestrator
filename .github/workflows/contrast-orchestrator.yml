@@ -235,11 +235,11 @@ jobs:
         id: set-outputs
         shell: bash
         run: |
-          MANIFEST='${{ steps.resolve.outputs.contrast_ci_manifest }}'
+          CONTRAST_CI_MANIFEST='${{ steps.resolve.outputs.contrast_ci_manifest }}'
 
           # Write manifest to job output using heredoc delimiter
           echo "contrast_ci_manifest<<EOF" >> $GITHUB_OUTPUT
-          echo "$MANIFEST" >> $GITHUB_OUTPUT
+          echo "$CONTRAST_CI_MANIFEST" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
           # CONTRAST_APP_IDS is written to $GITHUB_ENV by the resolver.
@@ -253,7 +253,7 @@ jobs:
           fi
 
           # Extract first app name from resolver manifest for SAST backward compat
-          APP_NAME=$(echo "$MANIFEST" | jq -r '[.resolutions[] | select(.appId != null)] | first | .appName // empty')
+          APP_NAME=$(echo "$CONTRAST_CI_MANIFEST" | jq -r '[.resolutions[] | select(.appId != null)] | first | .appName // empty')
           if [[ -n "$APP_NAME" ]]; then
             echo "contrast_app_name=$APP_NAME" >> $GITHUB_OUTPUT
             echo "Resolved application name: $APP_NAME"
@@ -453,6 +453,7 @@ jobs:
           aws_region:                 ${{ inputs.aws_region }}
           contrast_host:              ${{ inputs.api_host }}
           contrast_org_id:            ${{ inputs.contrast_org_id }}
+          contrast_app_id:            ${{ inputs.contrast_application_id }}
           contrast_app_ids:           ${{ needs.contrast-recon-resolve.outputs.contrast_app_ids }}
           contrast_ci_manifest:       ${{ needs.contrast-recon-resolve.outputs.contrast_ci_manifest }}
           base_branch:                ${{ inputs.base_branch }}
