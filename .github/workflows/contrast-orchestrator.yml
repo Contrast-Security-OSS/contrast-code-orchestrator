@@ -247,12 +247,11 @@ jobs:
           echo "$CONTRAST_CI_MANIFEST" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-          # CONTRAST_APP_IDS is written to $GITHUB_ENV by the resolver.
-          # Relay it to job output so downstream jobs can read it.
-          if grep -q '^CONTRAST_APP_IDS=' "$GITHUB_ENV" 2>/dev/null; then
-            APP_IDS=$(grep '^CONTRAST_APP_IDS=' "$GITHUB_ENV" | cut -d= -f2-)
-            echo "contrast_app_ids=$APP_IDS" >> $GITHUB_OUTPUT
-            echo "Resolved CONTRAST_APP_IDS: $APP_IDS"
+          # CONTRAST_APP_IDS is written to $GITHUB_ENV by the resolver container.
+          # GitHub Actions injects it as an env var in subsequent steps.
+          if [[ -n "$CONTRAST_APP_IDS" && "$CONTRAST_APP_IDS" != "null" ]]; then
+            echo "contrast_app_ids=$CONTRAST_APP_IDS" >> $GITHUB_OUTPUT
+            echo "Resolved CONTRAST_APP_IDS: $CONTRAST_APP_IDS"
           else
             echo "::warning::Resolver did not write CONTRAST_APP_IDS to GITHUB_ENV"
           fi
